@@ -75,6 +75,44 @@ class DB {
     }
   }
 
+  async getUsers(page = 1, limit = config.db.listPerPage, name = '*') {
+    page = Number(page);
+    limit = Number(limit);
+    if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(limit + 1)) {
+      throw new StatusCodeError('invalid page or limit', 400);
+    }
+
+    const offset = (page - 1) * limit;
+    if (!Number.isSafeInteger(offset)) {
+      throw new StatusCodeError('invalid page or limit', 400);
+    }
+
+    if (typeof name !== 'string') {
+      throw new StatusCodeError('invalid name filter', 400);
+    }
+    const nameFilter = name.replace(/\*/g, '%');
+    const connection = await this.getConnection();
+    try {
+      let users = await this.query(
+        connection,
+        `SELECT id, name, email FROM user WHERE name LIKE ? ORDER BY id LIMIT ? OFFSET ?`,
+        [nameFilter, limit + 1, offset]
+      );
+      const more = users.length > limit;
+      if (more) {
+        users = users.slice(0, limit);
+      }
+
+      for (const user of users) {
+        const roles = await this.query(connection, `SELECT role, objectId FROM userRole WHERE userId=?`, [user.id]);
+        user.roles = roles.map((role) => ({ role: role.role, objectId: role.objectId || undefined }));
+      }
+      return [users, more];
+    } finally {
+      connection.end();
+    }
+  }
+
   async updateUser(userId, name, email, password) {
     const connection = await this.getConnection();
     try {
