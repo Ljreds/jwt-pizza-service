@@ -9,7 +9,7 @@ jest.mock('../database/database.js', () => ({
     isLoggedIn: jest.fn(async () => true),
     loginUser: jest.fn(async () => {}),
   },
-  Role: { Diner: 'diner' },
+  Role: { Admin: 'admin', Diner: 'diner' },
 }));
 
 const { DB } = require('../database/database.js');
@@ -74,6 +74,18 @@ test('delete user', async () => {
 
   expect(deleteUserRes.status).toBe(200);
   expect(DB.deleteUser).toHaveBeenCalledWith(user.id);
+  expect(deleteUserRes.body).toEqual({ message: 'user deleted' });
+});
+
+test('cannot delete another user without admin role', async () => {
+  DB.deleteUser.mockClear();
+  const [, userToken] = await registerUser(request(app));
+  const deleteUserRes = await request(app)
+    .delete('/api/user/2')
+    .set('Authorization', 'Bearer ' + userToken);
+
+  expect(deleteUserRes.status).toBe(403);
+  expect(DB.deleteUser).not.toHaveBeenCalled();
 });
 
 async function registerUser(service) {
