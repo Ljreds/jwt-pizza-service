@@ -75,24 +75,33 @@ class DB {
     }
   }
 
+  // Returns [users, more]: one page of users matching a name filter, and whether another page exists.
+  // Pages are 1-based (page 1 is the first page), unlike getFranchises which is 0-based.
   async getUsers(page = 1, limit = config.db.listPerPage, name = '*') {
+    // Query-string values arrive as strings, so convert them before validating.
     page = Number(page);
     limit = Number(limit);
+    // Reject NaN, decimals, zero and negatives before the values are used in SQL.
     if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(limit + 1)) {
       throw new StatusCodeError('invalid page or limit', 400);
     }
 
+    // How many rows to skip: page 1 skips 0, page 2 skips `limit`, and so on.
     const offset = (page - 1) * limit;
     if (!Number.isSafeInteger(offset)) {
       throw new StatusCodeError('invalid page or limit', 400);
     }
 
+    // A repeated ?name=a&name=b makes Express pass an array, so only accept a single string.
     if (typeof name !== 'string') {
       throw new StatusCodeError('invalid name filter', 400);
     }
+    // The API uses * as a wildcard, but SQL LIKE uses %.
     const nameFilter = name.replace(/\*/g, '%');
     const connection = await this.getConnection();
     try {
+      // Ask for one extra row (limit + 1). If it comes back, another page exists, so no COUNT query is needed.
+      // The ? placeholders are bound parameters, so user input is never concatenated into the SQL.
       let users = await this.query(
         connection,
         `SELECT id, name, email FROM user WHERE name LIKE ? ORDER BY id LIMIT ? OFFSET ?`,
@@ -100,9 +109,11 @@ class DB {
       );
       const more = users.length > limit;
       if (more) {
+        // Drop the extra probe row so the caller gets exactly `limit` users.
         users = users.slice(0, limit);
       }
 
+      // Roles live in a separate table, so attach them to each user. The password column is never selected.
       for (const user of users) {
         const roles = await this.query(connection, `SELECT role, objectId FROM userRole WHERE userId=?`, [user.id]);
         user.roles = roles.map((role) => ({ role: role.role, objectId: role.objectId || undefined }));
@@ -113,19 +124,24 @@ class DB {
     }
   }
 
+  // Deletes one user and the rows that depend on them. Either everything is deleted or nothing is.
   async deleteUser(userId) {
     const connection = await this.getConnection();
     try {
       await connection.beginTransaction();
       try {
+        // Child rows first: userRole has a foreign key to user, so the user row can't go while roles reference it.
+        // Removing auth rows also logs the deleted user out of every session.
         await this.query(connection, `DELETE FROM auth WHERE userId=?`, [userId]);
         await this.query(connection, `DELETE FROM userRole WHERE userId=?`, [userId]);
         const result = await this.query(connection, `DELETE FROM user WHERE id=?`, [userId]);
+        // affectedRows is 0 when no such user existed. Throwing here triggers the rollback below.
         if (result.affectedRows === 0) {
           throw new StatusCodeError('unknown user', 404);
         }
         await connection.commit();
       } catch (err) {
+        // Undo the partial deletes, then pass the original error up so the route can report it.
         await connection.rollback();
         throw err;
       }

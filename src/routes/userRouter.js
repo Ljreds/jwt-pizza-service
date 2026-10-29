@@ -73,10 +73,12 @@ userRouter.delete(
   '/:userId',
   authRouter.authenticateToken,
   asyncHandler(async (req, res) => {
+    // URL params are strings, so convert, then reject anything that isn't a positive whole number.
     const userId = Number(req.params.userId);
     if (!Number.isSafeInteger(userId) || userId < 1) {
       return res.status(400).json({ message: 'invalid user id' });
     }
+    // Same rule as updateUser: you can delete yourself, but only an admin can delete someone else.
     if (req.user.id !== userId && !req.user.isRole(Role.Admin)) {
       return res.status(403).json({ message: 'unauthorized' });
     }
@@ -91,6 +93,7 @@ userRouter.get(
   '/',
   authRouter.authenticateToken,
   asyncHandler(async (req, res) => {
+    // Query-string options (?page=&limit=&name=) go straight to the DB layer, which validates them and applies defaults.
     const [users, more] = await DB.getUsers(req.query.page, req.query.limit, req.query.name);
     res.json({ users, more });
   }),
