@@ -108,6 +108,30 @@ function startRequestMetricsReporting() {
   return timer;
 }
 
+// The caller supplies the number of distinct users with a valid login session.
+function reportActiveUsers(count) {
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new RangeError('Active user count must be a non-negative safe integer');
+  }
+
+  const timeUnixNano = (BigInt(Date.now()) * 1_000_000n).toString();
+  sendMetrics([
+    {
+      name: 'user.active.count',
+      unit: '{user}',
+      gauge: {
+        dataPoints: [{
+          asInt: String(count),
+          attributes: [{ key: 'service.instance.id', value: { stringValue: instanceId } }],
+          timeUnixNano,
+        }],
+      },
+    },
+  ], AbortSignal.timeout(10_000)).catch((error) => {
+    console.error('Failed to report active user metrics:', error);
+  });
+}
+
 function pizzaPurchase(success, latency, price) {
   const timeUnixNano = (BigInt(Date.now()) * 1_000_000n).toString();
   const metrics = [
@@ -161,5 +185,6 @@ module.exports = {
   getMemoryUsagePercentage,
   requestTracker,
   startRequestMetricsReporting,
+  reportActiveUsers,
   pizzaPurchase,
 };

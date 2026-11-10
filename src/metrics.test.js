@@ -75,6 +75,39 @@ test('reports cumulative request counts by method, including idle intervals', as
   }
 });
 
+test.each([0, 3])('reports %i active users as a gauge', (count) => {
+  metrics.reportActiveUsers(count);
+
+  const { resourceMetrics } = JSON.parse(global.fetch.mock.calls[0][1].body);
+  const metric = resourceMetrics[0].scopeMetrics[0].metrics[0];
+  expect(metric.name).toBe('user.active.count');
+  expect(metric.unit).toBe('{user}');
+  expect(metric.gauge.dataPoints).toEqual([
+    expect.objectContaining({
+      asInt: String(count),
+      attributes: [{ key: 'service.instance.id', value: { stringValue: expect.any(String) } }],
+      timeUnixNano: expect.any(String),
+    }),
+  ]);
+});
+
+test.each([-1, 1.5, NaN, Number.MAX_SAFE_INTEGER + 1])('rejects invalid active user count %s', (count) => {
+  expect(() => metrics.reportActiveUsers(count)).toThrow('Active user count must be a non-negative safe integer');
+  expect(global.fetch).not.toHaveBeenCalled();
+});
+
+test('logs active user metric delivery failures', async () => {
+  global.fetch.mockResolvedValue({ ok: false, status: 503 });
+  const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    metrics.reportActiveUsers(1);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(log).toHaveBeenCalledWith('Failed to report active user metrics:', expect.any(Error));
+  } finally {
+    log.mockRestore();
+  }
+});
+
 test('reports successful purchases, revenue, and pizza creation latency', () => {
   metrics.pizzaPurchase(true, 25, 10);
 
