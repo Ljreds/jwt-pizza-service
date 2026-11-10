@@ -9,6 +9,10 @@ const requestCounts = new Map([
   ['DELETE', 0n],
 ]);
 const knownMethods = new Set(['GET', 'PUT', 'POST', 'DELETE', 'HEAD', 'OPTIONS', 'PATCH', 'CONNECT', 'TRACE']);
+const requestDurationBounds = [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 10];
+const requestDurations = new Map(
+  Array.from(requestCounts.keys(), (method) => [method, { count: 0n, sum: 0, buckets: requestDurationBounds.map(() => 0n).concat(0n) }])
+);
 const instanceId = randomUUID();
 const requestCounterStart = (BigInt(Date.now()) * 1_000_000n).toString();
 const authenticationCounts = new Map([['success', 0n], ['failure', 0n]]);
@@ -59,9 +63,19 @@ async function sendMetrics(metrics, signal) {
 }
 
 function requestTracker(req, res, next) {
+  const start = process.hrtime.bigint();
   res.once('finish', () => {
     const method = knownMethods.has(req.method) ? req.method : '_OTHER';
     requestCounts.set(method, (requestCounts.get(method) || 0n) + 1n);
+    if (!requestDurations.has(method)) {
+      requestDurations.set(method, { count: 0n, sum: 0, buckets: requestDurationBounds.map(() => 0n).concat(0n) });
+    }
+    const duration = Number(process.hrtime.bigint() - start) / 1e9;
+    const observation = requestDurations.get(method);
+    observation.count += 1n;
+    observation.sum += duration;
+    const bucket = requestDurationBounds.findIndex((bound) => duration <= bound);
+    observation.buckets[bucket === -1 ? requestDurationBounds.length : bucket] += 1n;
   });
 
   next();
@@ -93,6 +107,25 @@ function startRequestMetricsReporting() {
           isMonotonic: true,
           dataPoints: Array.from(requestCounts, ([method, count]) => ({
             asInt: count.toString(),
+            attributes: [
+              { key: 'http.request.method', value: { stringValue: method } },
+              { key: 'service.instance.id', value: { stringValue: instanceId } },
+            ],
+            startTimeUnixNano: requestCounterStart,
+            timeUnixNano,
+          })),
+        },
+      },
+      {
+        name: 'http.server.request.duration',
+        unit: 's',
+        histogram: {
+          aggregationTemporality: 2,
+          dataPoints: Array.from(requestDurations, ([method, duration]) => ({
+            count: duration.count.toString(),
+            sum: duration.sum,
+            bucketCounts: duration.buckets.map((count) => count.toString()),
+            explicitBounds: requestDurationBounds,
             attributes: [
               { key: 'http.request.method', value: { stringValue: method } },
               { key: 'service.instance.id', value: { stringValue: instanceId } },

@@ -75,6 +75,51 @@ test('reports cumulative request counts by method, including idle intervals', as
   }
 });
 
+test('reports cumulative request latency in seconds by HTTP method', async () => {
+  jest.useFakeTimers();
+  jest.resetModules();
+  const isolatedMetrics = require('./metrics.js');
+  const timer = isolatedMetrics.startRequestMetricsReporting();
+  try {
+    const getPoints = (call) => {
+      const { resourceMetrics } = JSON.parse(global.fetch.mock.calls[call][1].body);
+      const histogram = resourceMetrics[0].scopeMetrics[0].metrics.find((metric) => metric.name === 'http.server.request.duration');
+      expect(histogram.unit).toBe('s');
+      expect(histogram.histogram.aggregationTemporality).toBe(2);
+      return histogram.histogram.dataPoints;
+    };
+    const initial = getPoints(0);
+    expect(initial.find((point) => point.attributes[0].value.stringValue === 'GET').count).toBe('0');
+    const getResponse = new EventEmitter();
+    const postResponse = new EventEmitter();
+    isolatedMetrics.requestTracker({ method: 'GET' }, getResponse, jest.fn());
+    await jest.advanceTimersByTimeAsync(50);
+    getResponse.emit('finish');
+    isolatedMetrics.requestTracker({ method: 'POST' }, postResponse, jest.fn());
+    await jest.advanceTimersByTimeAsync(200);
+    postResponse.emit('finish');
+    getResponse.emit('finish');
+    await jest.advanceTimersByTimeAsync(14_750);
+
+    const reported = getPoints(1);
+    const get = reported.find((point) => point.attributes[0].value.stringValue === 'GET');
+    const post = reported.find((point) => point.attributes[0].value.stringValue === 'POST');
+    expect(get.count).toBe('1');
+    expect(get.sum).toBeCloseTo(0.05);
+    expect(get.bucketCounts[get.explicitBounds.indexOf(0.05)]).toBe('1');
+    expect(post.count).toBe('1');
+    expect(post.sum).toBeCloseTo(0.2);
+    expect(post.bucketCounts[post.explicitBounds.indexOf(0.25)]).toBe('1');
+    expect(get.startTimeUnixNano).toBe(initial[0].startTimeUnixNano);
+
+    await jest.advanceTimersByTimeAsync(15_000);
+    expect(getPoints(2).find((point) => point.attributes[0].value.stringValue === 'GET').sum).toBeCloseTo(0.05);
+  } finally {
+    clearInterval(timer);
+    jest.useRealTimers();
+  }
+});
+
 test('records authentication successes and failures as cumulative counters', async () => {
   jest.useFakeTimers();
   const timer = metrics.startRequestMetricsReporting();

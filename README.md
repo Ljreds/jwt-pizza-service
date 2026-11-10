@@ -60,6 +60,18 @@ sum(increase(http_server_request_count_total[1m]))
 The first query provides a series for each method; the second provides the total.
 `increase` estimates the count over a rolling minute, so values can be fractional.
 
+Request duration is recorded from middleware entry until the response finishes,
+and exported as the cumulative `http.server.request.duration` histogram in
+seconds. For average latency in milliseconds by method over one minute:
+
+```promql
+1000 * sum by (http_request_method) (rate(http_server_request_duration_seconds_sum[1m]))
+  / sum by (http_request_method) (rate(http_server_request_duration_seconds_count[1m]))
+```
+
+Use the metric names shown by your Grafana data source if its translation differs.
+This groups by method, not by endpoint; aborted responses are not recorded.
+
 ## Active user metrics
 
 The service reports `user.active.count` at startup and every 15 seconds. It counts
