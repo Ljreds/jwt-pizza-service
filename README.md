@@ -90,6 +90,17 @@ sum by (auth_result) (increase(auth_attempt_count_total[1m]))
 Check the metric and label names in your Grafana data source if its translation
 differs. Values are estimates over a rolling minute and can be fractional.
 
+## System metrics
+
+The service sends `system.memory.usage.percent` and `system.cpu.usage.percent`
+as gauges every 15 seconds. Memory is the operating system's used memory
+percentage (`total - free`); CPU is the percentage of non-idle CPU time across
+logical cores during the preceding sampling interval. Memory is reported at
+startup; CPU needs two samples, so its first value arrives after 15 seconds.
+These are system-wide values, not the Node.js process's usage, and may reflect
+host rather than container limits. In Grafana, select the translated metric
+names from the data source and set gauge panels to a 0–100 percent scale.
+
 ## Development notes
 
 Install the required packages.

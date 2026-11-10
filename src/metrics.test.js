@@ -144,6 +144,53 @@ test('logs active user metric delivery failures', async () => {
   }
 });
 
+test('reports memory immediately and CPU usage over sampling intervals', async () => {
+  jest.useFakeTimers();
+  const cpu = (user, idle) => [{ times: { user, nice: 0, sys: 0, idle, irq: 0 } }];
+  os.cpus.mockReset().mockReturnValueOnce(cpu(100, 100)).mockReturnValueOnce(cpu(150, 150)).mockReturnValueOnce(cpu(175, 225));
+  os.totalmem.mockReturnValue(100);
+  os.freemem.mockReturnValue(25);
+  const timer = metrics.startSystemMetricsReporting();
+  try {
+    const reported = (call) => JSON.parse(global.fetch.mock.calls[call][1].body).resourceMetrics[0].scopeMetrics[0].metrics;
+    expect(reported(0).map((metric) => metric.name)).toEqual(['system.memory.usage.percent']);
+    expect(reported(0)[0].gauge.dataPoints[0].asDouble).toBe(75);
+
+    await jest.advanceTimersByTimeAsync(15_000);
+    expect(reported(1).map((metric) => [metric.name, metric.unit, metric.gauge.dataPoints[0].asDouble])).toEqual([
+      ['system.cpu.usage.percent', '%', 50],
+      ['system.memory.usage.percent', '%', 75],
+    ]);
+    await jest.advanceTimersByTimeAsync(15_000);
+    expect(reported(2)[0].gauge.dataPoints[0].asDouble).toBe(25);
+  } finally {
+    clearInterval(timer);
+    jest.useRealTimers();
+  }
+});
+
+test('skips invalid CPU samples and logs failed system metric delivery', async () => {
+  jest.useFakeTimers();
+  const cpu = [{ times: { user: 100, nice: 0, sys: 0, idle: 100, irq: 0 } }];
+  os.cpus.mockReset().mockReturnValue(cpu);
+  os.totalmem.mockReturnValue(100);
+  os.freemem.mockReturnValue(25);
+  global.fetch.mockResolvedValue({ ok: false, status: 503 });
+  const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+  const timer = metrics.startSystemMetricsReporting();
+  try {
+    await jest.advanceTimersByTimeAsync(15_000);
+    expect(log).toHaveBeenCalledWith('Failed to report system metrics:', expect.any(Error));
+    expect(log).toHaveBeenCalledWith('Failed to collect CPU usage: invalid CPU time interval');
+    const sent = JSON.parse(global.fetch.mock.calls[1][1].body).resourceMetrics[0].scopeMetrics[0].metrics;
+    expect(sent.map((metric) => metric.name)).toEqual(['system.memory.usage.percent']);
+  } finally {
+    clearInterval(timer);
+    log.mockRestore();
+    jest.useRealTimers();
+  }
+});
+
 test('reports successful purchases, revenue, and pizza creation latency', () => {
   metrics.pizzaPurchase(true, 25, 10);
 

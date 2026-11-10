@@ -158,6 +158,76 @@ function reportActiveUsers(count) {
   });
 }
 
+function startSystemMetricsReporting() {
+  let previousCpus;
+  let sending = false;
+
+  function report() {
+    if (sending) return;
+    const timeUnixNano = (BigInt(Date.now()) * 1_000_000n).toString();
+    const attributes = [{ key: 'service.instance.id', value: { stringValue: instanceId } }];
+    const values = [];
+
+    try {
+      const cpus = os.cpus();
+      if (cpus.length === 0) throw new Error('No CPU information available');
+      if (previousCpus && previousCpus.length === cpus.length) {
+        let total = 0;
+        let idle = 0;
+        let valid = true;
+        for (let i = 0; i < cpus.length; i++) {
+          for (const key of ['user', 'nice', 'sys', 'idle', 'irq']) {
+            const delta = cpus[i].times[key] - previousCpus[i].times[key];
+            if (!Number.isFinite(delta) || delta < 0) valid = false;
+            total += delta;
+            if (key === 'idle') idle += delta;
+          }
+        }
+        if (valid && total > 0) {
+          values.push({ name: 'system.cpu.usage.percent', value: ((total - idle) / total) * 100 });
+        } else {
+          console.error('Failed to collect CPU usage: invalid CPU time interval');
+        }
+      }
+      previousCpus = cpus;
+    } catch (error) {
+      previousCpus = undefined;
+      console.error('Failed to collect CPU usage:', error);
+    }
+
+    try {
+      const total = os.totalmem();
+      const free = os.freemem();
+      if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(free) || free < 0 || free > total) {
+        throw new Error('Invalid system memory information');
+      }
+      values.push({ name: 'system.memory.usage.percent', value: ((total - free) / total) * 100 });
+    } catch (error) {
+      console.error('Failed to collect memory usage:', error);
+    }
+
+    if (values.length === 0) return;
+    sending = true;
+    const metrics = values.map(({ name, value }) => ({
+      name,
+      unit: '%',
+      gauge: { dataPoints: [{ asDouble: value, attributes, timeUnixNano }] },
+    }));
+    sendMetrics(metrics, AbortSignal.timeout(10_000))
+      .catch((error) => {
+        console.error('Failed to report system metrics:', error);
+      })
+      .finally(() => {
+        sending = false;
+      });
+  }
+
+  report();
+  const timer = setInterval(report, 15_000);
+  timer.unref();
+  return timer;
+}
+
 function pizzaPurchase(success, latency, price) {
   const timeUnixNano = (BigInt(Date.now()) * 1_000_000n).toString();
   const metrics = [
@@ -212,6 +282,7 @@ module.exports = {
   requestTracker,
   recordAuthenticationAttempt,
   startRequestMetricsReporting,
+  startSystemMetricsReporting,
   reportActiveUsers,
   pizzaPurchase,
 };
