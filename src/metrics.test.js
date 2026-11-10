@@ -75,6 +75,42 @@ test('reports cumulative request counts by method, including idle intervals', as
   }
 });
 
+test('records authentication successes and failures as cumulative counters', async () => {
+  jest.useFakeTimers();
+  const timer = metrics.startRequestMetricsReporting();
+  try {
+    const points = (call) => {
+      const { resourceMetrics } = JSON.parse(global.fetch.mock.calls[call][1].body);
+      const metric = resourceMetrics[0].scopeMetrics[0].metrics.find((item) => item.name === 'auth.attempt.count');
+      expect(metric.unit).toBe('{attempt}');
+      expect(metric.sum.aggregationTemporality).toBe(2);
+      expect(metric.sum.isMonotonic).toBe(true);
+      return metric.sum.dataPoints;
+    };
+    const initial = points(0);
+    expect(initial.map((point) => point.asInt)).toEqual(['0', '0']);
+    metrics.recordAuthenticationAttempt(true);
+    metrics.recordAuthenticationAttempt(true);
+    metrics.recordAuthenticationAttempt(false);
+    await jest.advanceTimersByTimeAsync(15_000);
+    const reported = points(1);
+    expect(reported.map((point) => [point.attributes[0].value.stringValue, point.asInt])).toEqual([
+      ['success', '2'], ['failure', '1'],
+    ]);
+    expect(reported[0].startTimeUnixNano).toBe(initial[0].startTimeUnixNano);
+    expect(reported[0].attributes[1]).toEqual(initial[0].attributes[1]);
+    await jest.advanceTimersByTimeAsync(15_000);
+    expect(points(2).map((point) => point.asInt)).toEqual(['2', '1']);
+  } finally {
+    clearInterval(timer);
+    jest.useRealTimers();
+  }
+});
+
+test.each([undefined, null, 'false', 0])('rejects invalid authentication result %s', (result) => {
+  expect(() => metrics.recordAuthenticationAttempt(result)).toThrow('Authentication result must be a boolean');
+});
+
 test.each([0, 3])('reports %i active users as a gauge', (count) => {
   metrics.reportActiveUsers(count);
 

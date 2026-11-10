@@ -11,6 +11,7 @@ const requestCounts = new Map([
 const knownMethods = new Set(['GET', 'PUT', 'POST', 'DELETE', 'HEAD', 'OPTIONS', 'PATCH', 'CONNECT', 'TRACE']);
 const instanceId = randomUUID();
 const requestCounterStart = (BigInt(Date.now()) * 1_000_000n).toString();
+const authenticationCounts = new Map([['success', 0n], ['failure', 0n]]);
 
 function getCpuUsagePercentage() {
   // Load average is a runnable-work estimate, not direct CPU utilization.
@@ -66,6 +67,14 @@ function requestTracker(req, res, next) {
   next();
 }
 
+function recordAuthenticationAttempt(success) {
+  if (typeof success !== 'boolean') {
+    throw new TypeError('Authentication result must be a boolean');
+  }
+  const result = success ? 'success' : 'failure';
+  authenticationCounts.set(result, authenticationCounts.get(result) + 1n);
+}
+
 function startRequestMetricsReporting() {
   let sending = false;
 
@@ -93,9 +102,26 @@ function startRequestMetricsReporting() {
           })),
         },
       },
+      {
+        name: 'auth.attempt.count',
+        unit: '{attempt}',
+        sum: {
+          aggregationTemporality: 2,
+          isMonotonic: true,
+          dataPoints: Array.from(authenticationCounts, ([result, count]) => ({
+            asInt: count.toString(),
+            attributes: [
+              { key: 'auth.result', value: { stringValue: result } },
+              { key: 'service.instance.id', value: { stringValue: instanceId } },
+            ],
+            startTimeUnixNano: requestCounterStart,
+            timeUnixNano,
+          })),
+        },
+      },
     ], AbortSignal.timeout(10_000))
       .catch((error) => {
-        console.error('Failed to report request metrics:', error);
+        console.error('Failed to report request and authentication metrics:', error);
       })
       .finally(() => {
         sending = false;
@@ -184,6 +210,7 @@ module.exports = {
   getCpuUsagePercentage,
   getMemoryUsagePercentage,
   requestTracker,
+  recordAuthenticationAttempt,
   startRequestMetricsReporting,
   reportActiveUsers,
   pizzaPurchase,

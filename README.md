@@ -72,6 +72,22 @@ logged and retried at the next interval.
 For a single service instance, use the gauge displayed by your Grafana data source
 (typically `user_active_count`) in a Stat panel.
 
+## Authentication attempt metrics
+
+`recordAuthenticationAttempt(success)` records a successful (`true`) or failed
+(`false`) attempt. The service exports cumulative `auth.attempt.count` values
+every 15 seconds, including idle periods. The function is not yet wired to the
+authentication routes.
+
+Once wired, use this PromQL query to display attempts per minute by outcome:
+
+```promql
+sum by (auth_result) (increase(auth_attempt_count_total[1m]))
+```
+
+Check the metric and label names in your Grafana data source if its translation
+differs. Values are estimates over a rolling minute and can be fractional.
+
 ## Development notes
 
 Install the required packages.
