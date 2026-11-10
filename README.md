@@ -28,8 +28,20 @@ module.exports =  {
    url: 'https://pizza-factory.cs329.click',
    apiKey: 'yourapikeyhere',
    },
+   metrics: {
+     source: 'jwt-pizza-service-dev',
+     endpointUrl: 'https://your-grafana-otlp-endpoint/otlp/v1/metrics',
+     accountId: 'your-grafana-account-id',
+     apiKey: 'your-grafana-api-key',
+   },
 };
 ```
+
+For production deployments, configure the GitHub Actions secrets
+`METRICS_ENDPOINT_URL`, `METRICS_ACCOUNT_ID`, and `METRICS_API_KEY`. The CI
+workflow uses `jwt-pizza-service` as the production metrics source, distinct
+from the development source. The generated config is included in the deployment
+artifact and image, so access to those artifacts should be restricted.
 
 ## Endpoints
 
