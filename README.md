@@ -76,10 +76,12 @@ For a single service instance, use the gauge displayed by your Grafana data sour
 
 `recordAuthenticationAttempt(success)` records a successful (`true`) or failed
 (`false`) attempt. The service exports cumulative `auth.attempt.count` values
-every 15 seconds, including idle periods. The function is not yet wired to the
-authentication routes.
+every 15 seconds, including idle periods. Attempts are recorded for the login
+endpoint (`PUT /api/auth`): success means a session was created, while failure
+includes rejected credentials and errors creating the session. Registration,
+logout, and token checks are not counted.
 
-Once wired, use this PromQL query to display attempts per minute by outcome:
+Use this PromQL query to display attempts per minute by outcome:
 
 ```promql
 sum by (auth_result) (increase(auth_attempt_count_total[1m]))
