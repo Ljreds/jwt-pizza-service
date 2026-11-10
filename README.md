@@ -39,6 +39,27 @@ You can get the documentation for all endpoints by making the following request.
 curl localhost:3000/api/docs
 ```
 
+## HTTP request metrics
+
+The service sends cumulative HTTP request counts to the configured Grafana OTLP
+endpoint every 15 seconds, including when traffic is idle. Counts are recorded
+when responses finish, grouped by method and service instance. Unknown HTTP
+methods are grouped as `_OTHER`. Reporting is best-effort and does not block requests.
+
+In Grafana's Prometheus data source, use these PromQL queries for requests per
+minute (select the metric name shown by your data source if its translation differs):
+
+```promql
+sum by (http_request_method) (increase(http_server_request_count_total[1m]))
+```
+
+```promql
+sum(increase(http_server_request_count_total[1m]))
+```
+
+The first query provides a series for each method; the second provides the total.
+`increase` estimates the count over a rolling minute, so values can be fractional.
+
 ## Development notes
 
 Install the required packages.

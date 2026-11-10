@@ -1,5 +1,16 @@
 const os = require('os');
+const { randomUUID } = require('crypto');
 const config = require('./config.js');
+
+const requestCounts = new Map([
+  ['GET', 0n],
+  ['PUT', 0n],
+  ['POST', 0n],
+  ['DELETE', 0n],
+]);
+const knownMethods = new Set(['GET', 'PUT', 'POST', 'DELETE', 'HEAD', 'OPTIONS', 'PATCH', 'CONNECT', 'TRACE']);
+const instanceId = randomUUID();
+const requestCounterStart = (BigInt(Date.now()) * 1_000_000n).toString();
 
 function getCpuUsagePercentage() {
   // Load average is a runnable-work estimate, not direct CPU utilization.
@@ -16,7 +27,7 @@ function getMemoryUsagePercentage() {
   return memoryUsage.toFixed(2);
 }
 
-async function sendMetrics(metrics) {
+async function sendMetrics(metrics, signal) {
   const { source, endpointUrl, accountId, apiKey } = config.metrics || {};
   if (!source || !endpointUrl || !accountId || !apiKey) {
     throw new Error('Metrics configuration is incomplete');
@@ -24,6 +35,7 @@ async function sendMetrics(metrics) {
 
   const response = await fetch(endpointUrl, {
     method: 'POST',
+    signal,
     headers: {
       Authorization: `Basic ${Buffer.from(`${accountId}:${apiKey}`).toString('base64')}`,
       'Content-Type': 'application/json',
@@ -47,31 +59,53 @@ async function sendMetrics(metrics) {
 
 function requestTracker(req, res, next) {
   res.once('finish', () => {
+    const method = knownMethods.has(req.method) ? req.method : '_OTHER';
+    requestCounts.set(method, (requestCounts.get(method) || 0n) + 1n);
+  });
+
+  next();
+}
+
+function startRequestMetricsReporting() {
+  let sending = false;
+
+  function report() {
+    if (sending) return;
+    sending = true;
     const timeUnixNano = (BigInt(Date.now()) * 1_000_000n).toString();
 
-    // Grafana can group this counter by method or sum methods for the total.
+    // Cumulative counters are sampled even during idle periods for Grafana rates.
     sendMetrics([
       {
         name: 'http.server.request.count',
         unit: '{request}',
         sum: {
-          aggregationTemporality: 1,
+          aggregationTemporality: 2,
           isMonotonic: true,
-          dataPoints: [
-            {
-              asInt: '1',
-              attributes: [{ key: 'http.request.method', value: { stringValue: req.method } }],
-              timeUnixNano,
-            },
-          ],
+          dataPoints: Array.from(requestCounts, ([method, count]) => ({
+            asInt: count.toString(),
+            attributes: [
+              { key: 'http.request.method', value: { stringValue: method } },
+              { key: 'service.instance.id', value: { stringValue: instanceId } },
+            ],
+            startTimeUnixNano: requestCounterStart,
+            timeUnixNano,
+          })),
         },
       },
-    ]).catch((error) => {
-      console.error('Failed to report request metrics:', error);
-    });
-  });
+    ], AbortSignal.timeout(10_000))
+      .catch((error) => {
+        console.error('Failed to report request metrics:', error);
+      })
+      .finally(() => {
+        sending = false;
+      });
+  }
 
-  next();
+  report();
+  const timer = setInterval(report, 15_000);
+  timer.unref();
+  return timer;
 }
 
 function pizzaPurchase(success, latency, price) {
@@ -126,5 +160,6 @@ module.exports = {
   getCpuUsagePercentage,
   getMemoryUsagePercentage,
   requestTracker,
+  startRequestMetricsReporting,
   pizzaPurchase,
 };
