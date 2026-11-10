@@ -57,3 +57,34 @@ test('reports request counts with the HTTP method as an attribute', () => {
     })
   );
 });
+
+test('reports successful pizza purchases with duration and price', () => {
+  metrics.pizzaPurchase(true, 25, 10);
+
+  const { resourceMetrics } = JSON.parse(global.fetch.mock.calls[0][1].body);
+  const purchaseMetrics = resourceMetrics[0].scopeMetrics[0].metrics;
+  expect(purchaseMetrics.map((metric) => metric.name)).toEqual([
+    'pizza.purchase.count',
+    'pizza.purchase.duration',
+    'pizza.purchase.price',
+  ]);
+  expect(purchaseMetrics[0].sum.dataPoints[0].attributes).toEqual([
+    { key: 'success', value: { boolValue: true } },
+  ]);
+  expect(purchaseMetrics[1].histogram.dataPoints[0].sum).toBe(25);
+  expect(purchaseMetrics[2].histogram.dataPoints[0].sum).toBe(10);
+});
+
+test('reports failed pizza purchases without reporting price', () => {
+  metrics.pizzaPurchase(false, 40, 0);
+
+  const { resourceMetrics } = JSON.parse(global.fetch.mock.calls[0][1].body);
+  const purchaseMetrics = resourceMetrics[0].scopeMetrics[0].metrics;
+  expect(purchaseMetrics.map((metric) => metric.name)).toEqual([
+    'pizza.purchase.count',
+    'pizza.purchase.duration',
+  ]);
+  expect(purchaseMetrics[0].sum.dataPoints[0].attributes).toEqual([
+    { key: 'success', value: { boolValue: false } },
+  ]);
+});

@@ -74,8 +74,66 @@ function requestTracker(req, res, next) {
   next();
 }
 
+function pizzaPurchase(success, latency, price) {
+  const timeUnixNano = (BigInt(Date.now()) * 1_000_000n).toString();
+  const attributes = [{ key: 'success', value: { boolValue: success } }];
+  const metrics = [
+    {
+      name: 'pizza.purchase.count',
+      unit: '{purchase}',
+      sum: {
+        aggregationTemporality: 1,
+        isMonotonic: true,
+        dataPoints: [{ asInt: '1', attributes, timeUnixNano }],
+      },
+    },
+    {
+      name: 'pizza.purchase.duration',
+      unit: 'ms',
+      histogram: {
+        aggregationTemporality: 1,
+        dataPoints: [
+          {
+            count: '1',
+            sum: latency,
+            bucketCounts: ['1'],
+            explicitBounds: [],
+            attributes,
+            timeUnixNano,
+          },
+        ],
+      },
+    },
+  ];
+
+  if (success) {
+    metrics.push({
+      name: 'pizza.purchase.price',
+      unit: '1',
+      histogram: {
+        aggregationTemporality: 1,
+        dataPoints: [
+          {
+            count: '1',
+            sum: price,
+            bucketCounts: ['1'],
+            explicitBounds: [],
+            attributes: [],
+            timeUnixNano,
+          },
+        ],
+      },
+    });
+  }
+
+  sendMetrics(metrics).catch((error) => {
+    console.error('Failed to report pizza purchase metrics:', error);
+  });
+}
+
 module.exports = {
   getCpuUsagePercentage,
   getMemoryUsagePercentage,
   requestTracker,
+  pizzaPurchase,
 };
