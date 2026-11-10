@@ -58,21 +58,19 @@ test('reports request counts with the HTTP method as an attribute', () => {
   );
 });
 
-test('reports successful pizza purchases with duration and price', () => {
+test('reports successful purchases, revenue, and pizza creation latency', () => {
   metrics.pizzaPurchase(true, 25, 10);
 
   const { resourceMetrics } = JSON.parse(global.fetch.mock.calls[0][1].body);
   const purchaseMetrics = resourceMetrics[0].scopeMetrics[0].metrics;
   expect(purchaseMetrics.map((metric) => metric.name)).toEqual([
     'pizza.purchase.count',
-    'pizza.purchase.duration',
-    'pizza.purchase.price',
+    'pizza.creation.duration',
+    'pizza.purchase.revenue',
   ]);
-  expect(purchaseMetrics[0].sum.dataPoints[0].attributes).toEqual([
-    { key: 'success', value: { boolValue: true } },
-  ]);
+  expect(purchaseMetrics[0].sum.dataPoints[0].asInt).toBe('1');
   expect(purchaseMetrics[1].histogram.dataPoints[0].sum).toBe(25);
-  expect(purchaseMetrics[2].histogram.dataPoints[0].sum).toBe(10);
+  expect(purchaseMetrics[2].sum.dataPoints[0].asDouble).toBe(10);
 });
 
 test('reports failed pizza purchases without reporting price', () => {
@@ -81,10 +79,9 @@ test('reports failed pizza purchases without reporting price', () => {
   const { resourceMetrics } = JSON.parse(global.fetch.mock.calls[0][1].body);
   const purchaseMetrics = resourceMetrics[0].scopeMetrics[0].metrics;
   expect(purchaseMetrics.map((metric) => metric.name)).toEqual([
-    'pizza.purchase.count',
-    'pizza.purchase.duration',
+    'pizza.purchase.failure.count',
+    'pizza.creation.duration',
   ]);
-  expect(purchaseMetrics[0].sum.dataPoints[0].attributes).toEqual([
-    { key: 'success', value: { boolValue: false } },
-  ]);
+  expect(purchaseMetrics[0].sum.dataPoints[0].asInt).toBe('1');
+  expect(purchaseMetrics[1].histogram.dataPoints[0].sum).toBe(40);
 });

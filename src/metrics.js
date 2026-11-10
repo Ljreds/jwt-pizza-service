@@ -76,19 +76,18 @@ function requestTracker(req, res, next) {
 
 function pizzaPurchase(success, latency, price) {
   const timeUnixNano = (BigInt(Date.now()) * 1_000_000n).toString();
-  const attributes = [{ key: 'success', value: { boolValue: success } }];
   const metrics = [
     {
-      name: 'pizza.purchase.count',
+      name: success ? 'pizza.purchase.count' : 'pizza.purchase.failure.count',
       unit: '{purchase}',
       sum: {
         aggregationTemporality: 1,
         isMonotonic: true,
-        dataPoints: [{ asInt: '1', attributes, timeUnixNano }],
+        dataPoints: [{ asInt: '1', attributes: [], timeUnixNano }],
       },
     },
     {
-      name: 'pizza.purchase.duration',
+      name: 'pizza.creation.duration',
       unit: 'ms',
       histogram: {
         aggregationTemporality: 1,
@@ -98,7 +97,7 @@ function pizzaPurchase(success, latency, price) {
             sum: latency,
             bucketCounts: ['1'],
             explicitBounds: [],
-            attributes,
+            attributes: [],
             timeUnixNano,
           },
         ],
@@ -108,20 +107,12 @@ function pizzaPurchase(success, latency, price) {
 
   if (success) {
     metrics.push({
-      name: 'pizza.purchase.price',
+      name: 'pizza.purchase.revenue',
       unit: '1',
-      histogram: {
+      sum: {
         aggregationTemporality: 1,
-        dataPoints: [
-          {
-            count: '1',
-            sum: price,
-            bucketCounts: ['1'],
-            explicitBounds: [],
-            attributes: [],
-            timeUnixNano,
-          },
-        ],
+        isMonotonic: true,
+        dataPoints: [{ asDouble: price, attributes: [], timeUnixNano }],
       },
     });
   }
