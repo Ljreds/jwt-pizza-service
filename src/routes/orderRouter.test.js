@@ -58,7 +58,7 @@ test('reports the total price and factory latency for a successful order', async
   expect(response.status).toBe(200);
   expect(response.body).toEqual({ order, followLinkToEndChaos: 'report', jwt: 'token' });
   expect(metrics.pizzaPurchase).toHaveBeenCalledTimes(1);
-  expect(metrics.pizzaPurchase).toHaveBeenCalledWith(true, expect.any(Number), 5.5);
+  expect(metrics.pizzaPurchase).toHaveBeenCalledWith(true, expect.any(Number), 5.5, 2);
   expect(metrics.pizzaPurchase.mock.calls[0][1]).toBeGreaterThanOrEqual(0);
 });
 
@@ -73,7 +73,7 @@ test('reports a failed factory response without revenue', async () => {
   expect(response.status).toBe(500);
   expect(response.body).toEqual({ message: 'Failed to fulfill order at factory', followLinkToEndChaos: 'report' });
   expect(metrics.pizzaPurchase).toHaveBeenCalledTimes(1);
-  expect(metrics.pizzaPurchase).toHaveBeenCalledWith(false, expect.any(Number), 0);
+  expect(metrics.pizzaPurchase).toHaveBeenCalledWith(false, expect.any(Number), 0, 2);
 });
 
 test('reports a failed factory connection and propagates the error', async () => {
@@ -84,7 +84,7 @@ test('reports a failed factory connection and propagates the error', async () =>
   expect(response.status).toBe(500);
   expect(response.body).toEqual({ message: 'Factory unavailable' });
   expect(metrics.pizzaPurchase).toHaveBeenCalledTimes(1);
-  expect(metrics.pizzaPurchase).toHaveBeenCalledWith(false, expect.any(Number), 0);
+  expect(metrics.pizzaPurchase).toHaveBeenCalledWith(false, expect.any(Number), 0, 2);
 });
 
 test('does not report a factory attempt if saving the order fails', async () => {

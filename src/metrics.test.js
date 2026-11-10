@@ -156,6 +156,37 @@ test.each([undefined, null, 'false', 0])('rejects invalid authentication result 
   expect(() => metrics.recordAuthenticationAttempt(result)).toThrow('Authentication result must be a boolean');
 });
 
+test('reports pizzas sold cumulatively, excluding failed orders and retaining counts during idle intervals', async () => {
+  jest.useFakeTimers();
+  jest.resetModules();
+  const isolatedMetrics = require('./metrics.js');
+  const timer = isolatedMetrics.startRequestMetricsReporting();
+  try {
+    const sold = (call) => {
+      const { resourceMetrics } = JSON.parse(global.fetch.mock.calls[call][1].body);
+      const metric = resourceMetrics[0].scopeMetrics[0].metrics.find((item) => item.name === 'pizza.sold.count');
+      expect(metric.unit).toBe('{pizza}');
+      expect(metric.sum.aggregationTemporality).toBe(2);
+      expect(metric.sum.isMonotonic).toBe(true);
+      return metric.sum.dataPoints[0];
+    };
+    const initial = sold(0);
+    expect(initial.asInt).toBe('0');
+    isolatedMetrics.pizzaPurchase(true, 25, 10, 3);
+    isolatedMetrics.pizzaPurchase(false, 40, 0, 4);
+    isolatedMetrics.pizzaPurchase(true, 20, 2, 1);
+    await jest.advanceTimersByTimeAsync(15_000);
+    const afterOrders = sold(4);
+    expect(afterOrders.asInt).toBe('4');
+    expect(afterOrders.startTimeUnixNano).toBe(initial.startTimeUnixNano);
+    await jest.advanceTimersByTimeAsync(15_000);
+    expect(sold(5).asInt).toBe('4');
+  } finally {
+    clearInterval(timer);
+    jest.useRealTimers();
+  }
+});
+
 test.each([0, 3])('reports %i active users as a gauge', (count) => {
   metrics.reportActiveUsers(count);
 
@@ -237,7 +268,7 @@ test('skips invalid CPU samples and logs failed system metric delivery', async (
 });
 
 test('reports successful purchases, revenue, and pizza creation latency', () => {
-  metrics.pizzaPurchase(true, 25, 10);
+  metrics.pizzaPurchase(true, 25, 10, 1);
 
   const { resourceMetrics } = JSON.parse(global.fetch.mock.calls[0][1].body);
   const purchaseMetrics = resourceMetrics[0].scopeMetrics[0].metrics;
@@ -252,7 +283,7 @@ test('reports successful purchases, revenue, and pizza creation latency', () => 
 });
 
 test('reports failed pizza purchases without reporting price', () => {
-  metrics.pizzaPurchase(false, 40, 0);
+  metrics.pizzaPurchase(false, 40, 0, 1);
 
   const { resourceMetrics } = JSON.parse(global.fetch.mock.calls[0][1].body);
   const purchaseMetrics = resourceMetrics[0].scopeMetrics[0].metrics;

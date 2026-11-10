@@ -87,12 +87,12 @@ orderRouter.post(
       body: JSON.stringify({ diner: { id: req.user.id, name: req.user.name, email: req.user.email }, order }),
     }).catch((error) => {
       const latency = Number(process.hrtime.bigint() - start) / 1e6;
-      metrics.pizzaPurchase(false, latency, 0);
+      metrics.pizzaPurchase(false, latency, 0, order.items.length);
       throw error;
     });
     const latency = Number(process.hrtime.bigint() - start) / 1e6;
     const price = r.ok ? order.items.reduce((total, item) => total + Number(item.price), 0) : 0;
-    metrics.pizzaPurchase(r.ok, latency, price);
+    metrics.pizzaPurchase(r.ok, latency, price, order.items.length);
     const j = await r.json();
     if (r.ok) {
       res.send({ order, followLinkToEndChaos: j.reportUrl, jwt: j.jwt });

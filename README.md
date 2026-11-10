@@ -114,6 +114,20 @@ sum by (auth_result) (increase(auth_attempt_count_total[1m]))
 Check the metric and label names in your Grafana data source if its translation
 differs. Values are estimates over a rolling minute and can be fractional.
 
+## Pizzas sold
+
+The service counts each item in a successful factory order as one pizza. Failed
+orders do not increase the sold count. `pizza.sold.count` is exported as a
+cumulative counter every 15 seconds, including idle periods. For pizzas sold
+per minute, use a query such as:
+
+```promql
+sum(increase(pizza_sold_count_total[1m]))
+```
+
+Select the translated metric name shown by your data source if it differs.
+`increase` estimates the count over a rolling minute and can be fractional.
+
 ## System metrics
 
 The service sends `system.memory.usage.percent` and `system.cpu.usage.percent`

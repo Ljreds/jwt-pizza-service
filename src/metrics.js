@@ -16,6 +16,7 @@ const requestDurations = new Map(
 const instanceId = randomUUID();
 const requestCounterStart = (BigInt(Date.now()) * 1_000_000n).toString();
 const authenticationCounts = new Map([['success', 0n], ['failure', 0n]]);
+let pizzasSold = 0n;
 
 function getCpuUsagePercentage() {
   // Load average is a runnable-work estimate, not direct CPU utilization.
@@ -133,6 +134,20 @@ function startRequestMetricsReporting() {
             startTimeUnixNano: requestCounterStart,
             timeUnixNano,
           })),
+        },
+      },
+      {
+        name: 'pizza.sold.count',
+        unit: '{pizza}',
+        sum: {
+          aggregationTemporality: 2,
+          isMonotonic: true,
+          dataPoints: [{
+            asInt: pizzasSold.toString(),
+            attributes: [{ key: 'service.instance.id', value: { stringValue: instanceId } }],
+            startTimeUnixNano: requestCounterStart,
+            timeUnixNano,
+          }],
         },
       },
       {
@@ -261,7 +276,13 @@ function startSystemMetricsReporting() {
   return timer;
 }
 
-function pizzaPurchase(success, latency, price) {
+function pizzaPurchase(success, latency, price, pizzaCount) {
+  if (!Number.isSafeInteger(pizzaCount) || pizzaCount < 0) {
+    console.error('Failed to record pizzas sold: pizza count must be a non-negative safe integer');
+  } else if (success) {
+    pizzasSold += BigInt(pizzaCount);
+  }
+
   const timeUnixNano = (BigInt(Date.now()) * 1_000_000n).toString();
   const metrics = [
     {
