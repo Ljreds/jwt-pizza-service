@@ -176,11 +176,11 @@ test('reports pizzas sold cumulatively, excluding failed orders and retaining co
     isolatedMetrics.pizzaPurchase(false, 40, 0, 4);
     isolatedMetrics.pizzaPurchase(true, 20, 2, 1);
     await jest.advanceTimersByTimeAsync(15_000);
-    const afterOrders = sold(4);
+    const afterOrders = sold(1);
     expect(afterOrders.asInt).toBe('4');
     expect(afterOrders.startTimeUnixNano).toBe(initial.startTimeUnixNano);
     await jest.advanceTimersByTimeAsync(15_000);
-    expect(sold(5).asInt).toBe('4');
+    expect(sold(2).asInt).toBe('4');
   } finally {
     clearInterval(timer);
     jest.useRealTimers();
@@ -267,30 +267,73 @@ test('skips invalid CPU samples and logs failed system metric delivery', async (
   }
 });
 
-test('reports successful purchases, revenue, and pizza creation latency', () => {
-  metrics.pizzaPurchase(true, 25, 10, 1);
+test('exports cumulative pizza failures, revenue, and latency through idle intervals', async () => {
+  jest.useFakeTimers();
+  jest.resetModules();
+  const isolatedMetrics = require('./metrics.js');
+  const timer = isolatedMetrics.startRequestMetricsReporting();
+  try {
+    const payload = (call) => {
+      const { resourceMetrics } = JSON.parse(global.fetch.mock.calls[call][1].body);
+      return resourceMetrics[0].scopeMetrics[0].metrics;
+    };
+    const point = (items, name) => {
+      const metric = items.find((item) => item.name === name);
+      const data = metric.sum || metric.histogram;
+      expect(data.aggregationTemporality).toBe(2);
+      return data.dataPoints[0];
+    };
+    const initial = payload(0);
+    expect(point(initial, 'pizza.purchase.failure.count').asInt).toBe('0');
+    expect(point(initial, 'pizza.purchase.revenue').asDouble).toBe(0);
+    expect(point(initial, 'pizza.creation.duration').count).toBe('0');
 
-  const { resourceMetrics } = JSON.parse(global.fetch.mock.calls[0][1].body);
-  const purchaseMetrics = resourceMetrics[0].scopeMetrics[0].metrics;
-  expect(purchaseMetrics.map((metric) => metric.name)).toEqual([
-    'pizza.purchase.count',
-    'pizza.creation.duration',
-    'pizza.purchase.revenue',
-  ]);
-  expect(purchaseMetrics[0].sum.dataPoints[0].asInt).toBe('1');
-  expect(purchaseMetrics[1].histogram.dataPoints[0].sum).toBe(25);
-  expect(purchaseMetrics[2].sum.dataPoints[0].asDouble).toBe(10);
+    isolatedMetrics.pizzaPurchase(true, 25, 10.25, 3);
+    isolatedMetrics.pizzaPurchase(false, 40, 999, 4);
+    isolatedMetrics.pizzaPurchase(true, 70000, 2.5, 1);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(15_000);
+    const current = payload(1);
+    expect(point(current, 'pizza.purchase.count').asInt).toBe('2');
+    expect(point(current, 'pizza.purchase.failure.count').asInt).toBe('1');
+    expect(point(current, 'pizza.sold.count').asInt).toBe('4');
+    expect(point(current, 'pizza.purchase.revenue').asDouble).toBe(12.75);
+    const latency = point(current, 'pizza.creation.duration');
+    expect(latency.count).toBe('3');
+    expect(latency.sum).toBe(70065);
+    expect(latency.bucketCounts[latency.explicitBounds.indexOf(25)]).toBe('1');
+    expect(latency.bucketCounts[latency.explicitBounds.indexOf(50)]).toBe('1');
+    expect(latency.bucketCounts.at(-1)).toBe('1');
+    expect(latency.startTimeUnixNano).toBe(point(initial, 'pizza.creation.duration').startTimeUnixNano);
+
+    await jest.advanceTimersByTimeAsync(15_000);
+    expect(point(payload(2), 'pizza.purchase.failure.count').asInt).toBe('1');
+    expect(point(payload(2), 'pizza.purchase.revenue').asDouble).toBe(12.75);
+    expect(point(payload(2), 'pizza.creation.duration').count).toBe('3');
+  } finally {
+    clearInterval(timer);
+    jest.useRealTimers();
+  }
 });
 
-test('reports failed pizza purchases without reporting price', () => {
-  metrics.pizzaPurchase(false, 40, 0, 1);
-
-  const { resourceMetrics } = JSON.parse(global.fetch.mock.calls[0][1].body);
-  const purchaseMetrics = resourceMetrics[0].scopeMetrics[0].metrics;
-  expect(purchaseMetrics.map((metric) => metric.name)).toEqual([
-    'pizza.purchase.failure.count',
-    'pizza.creation.duration',
-  ]);
-  expect(purchaseMetrics[0].sum.dataPoints[0].asInt).toBe('1');
-  expect(purchaseMetrics[1].histogram.dataPoints[0].sum).toBe(40);
+test('retains pizza metrics when an export fails', async () => {
+  jest.useFakeTimers();
+  jest.resetModules();
+  const isolatedMetrics = require('./metrics.js');
+  global.fetch.mockResolvedValueOnce({ ok: false, status: 503 }).mockResolvedValue({ ok: true });
+  const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+  const timer = isolatedMetrics.startRequestMetricsReporting();
+  try {
+    isolatedMetrics.pizzaPurchase(false, 42, 0, 2);
+    await jest.advanceTimersByTimeAsync(15_000);
+    const { resourceMetrics } = JSON.parse(global.fetch.mock.calls[1][1].body);
+    const metrics = resourceMetrics[0].scopeMetrics[0].metrics;
+    expect(metrics.find((item) => item.name === 'pizza.purchase.failure.count').sum.dataPoints[0].asInt).toBe('1');
+    expect(metrics.find((item) => item.name === 'pizza.creation.duration').histogram.dataPoints[0].sum).toBe(42);
+    expect(log).toHaveBeenCalledWith('Failed to report request, authentication and pizza metrics:', expect.any(Error));
+  } finally {
+    clearInterval(timer);
+    log.mockRestore();
+    jest.useRealTimers();
+  }
 });

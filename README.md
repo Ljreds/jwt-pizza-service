@@ -128,6 +128,33 @@ sum(increase(pizza_sold_count_total[1m]))
 Select the translated metric name shown by your data source if it differs.
 `increase` estimates the count over a rolling minute and can be fractional.
 
+Pizza factory outcomes are also exported every 15 seconds, including idle
+intervals. `pizza.purchase.failure.count` counts failed factory requests (not
+individual pizzas), while `pizza.purchase.revenue` totals successful order
+prices. `pizza.creation.duration` is a cumulative histogram in milliseconds
+covering both successful and failed factory requests. The timer measures the
+factory request until response headers arrive, not response body parsing.
+
+Example PromQL queries, using typical translated metric names:
+
+```promql
+sum(increase(pizza_purchase_failure_count_total[1m]))
+```
+
+```promql
+sum(increase(pizza_purchase_revenue_total[1m]))
+```
+
+```promql
+sum(rate(pizza_creation_duration_milliseconds_sum[1m]))
+  / sum(rate(pizza_creation_duration_milliseconds_count[1m]))
+```
+
+The last query gives average factory latency in milliseconds; with no observations
+in the window, the average is undefined. Check your Grafana data source for the
+actual translated names. Existing panels using the old delta series may need
+updating.
+
 ## System metrics
 
 The service sends `system.memory.usage.percent` and `system.cpu.usage.percent`
@@ -152,3 +179,25 @@ Nodemon is assumed to be installed globally so that you can have hot reloading w
 ```sh
 npm -g install nodemon
 ```
+
+### Simulating traffic
+
+With the service running, a seeded test database, `curl`, and `jq` installed:
+
+```sh
+./generatePizzaTraffic.sh http://localhost:3000
+```
+
+The script continuously browses the menu, attempts invalid logins, holds a user
+session, places single-pizza orders, and attempts 22-pizza orders. Press Ctrl-C
+to stop it. It makes real orders and changes login sessions: use only a test
+environment you are authorized to exercise, not production without approval.
+
+The defaults expect the seeded diner (`d@jwt.com`) and franchisee (`f@jwt.com`)
+accounts and menu, franchise, and store ID 1. Override credentials with
+`DINER_EMAIL`, `DINER_PASSWORD`, `SESSION_EMAIL`, and `SESSION_PASSWORD`.
+Optionally set `FAILURE_EMAIL` and `FAILURE_PASSWORD` to a separate diner account
+for oversized orders; otherwise it uses the diner credentials. Sharing the same
+account between workers can cause one logout to invalidate another worker's
+session. The oversized order is expected to fail at the factory, but the service
+may already save the order before that failure.

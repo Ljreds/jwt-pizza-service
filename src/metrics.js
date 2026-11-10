@@ -17,6 +17,11 @@ const instanceId = randomUUID();
 const requestCounterStart = (BigInt(Date.now()) * 1_000_000n).toString();
 const authenticationCounts = new Map([['success', 0n], ['failure', 0n]]);
 let pizzasSold = 0n;
+let pizzaPurchases = 0n;
+let pizzaFailures = 0n;
+let pizzaRevenue = 0;
+const pizzaDurationBounds = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000];
+const pizzaDuration = { count: 0n, sum: 0, buckets: pizzaDurationBounds.map(() => 0n).concat(0n) };
 
 function getCpuUsagePercentage() {
   // Load average is a runnable-work estimate, not direct CPU utilization.
@@ -150,6 +155,53 @@ function startRequestMetricsReporting() {
           }],
         },
       },
+      ...[
+        ['pizza.purchase.count', pizzaPurchases],
+        ['pizza.purchase.failure.count', pizzaFailures],
+      ].map(([name, count]) => ({
+        name,
+        unit: '{purchase}',
+        sum: {
+          aggregationTemporality: 2,
+          isMonotonic: true,
+          dataPoints: [{
+            asInt: count.toString(),
+            attributes: [{ key: 'service.instance.id', value: { stringValue: instanceId } }],
+            startTimeUnixNano: requestCounterStart,
+            timeUnixNano,
+          }],
+        },
+      })),
+      {
+        name: 'pizza.purchase.revenue',
+        unit: '1',
+        sum: {
+          aggregationTemporality: 2,
+          isMonotonic: true,
+          dataPoints: [{
+            asDouble: pizzaRevenue,
+            attributes: [{ key: 'service.instance.id', value: { stringValue: instanceId } }],
+            startTimeUnixNano: requestCounterStart,
+            timeUnixNano,
+          }],
+        },
+      },
+      {
+        name: 'pizza.creation.duration',
+        unit: 'ms',
+        histogram: {
+          aggregationTemporality: 2,
+          dataPoints: [{
+            count: pizzaDuration.count.toString(),
+            sum: pizzaDuration.sum,
+            bucketCounts: pizzaDuration.buckets.map((count) => count.toString()),
+            explicitBounds: pizzaDurationBounds,
+            attributes: [{ key: 'service.instance.id', value: { stringValue: instanceId } }],
+            startTimeUnixNano: requestCounterStart,
+            timeUnixNano,
+          }],
+        },
+      },
       {
         name: 'auth.attempt.count',
         unit: '{attempt}',
@@ -169,7 +221,7 @@ function startRequestMetricsReporting() {
       },
     ], AbortSignal.timeout(10_000))
       .catch((error) => {
-        console.error('Failed to report request and authentication metrics:', error);
+        console.error('Failed to report request, authentication and pizza metrics:', error);
       })
       .finally(() => {
         sending = false;
@@ -277,57 +329,34 @@ function startSystemMetricsReporting() {
 }
 
 function pizzaPurchase(success, latency, price, pizzaCount) {
+  if (success) {
+    pizzaPurchases += 1n;
+  } else {
+    pizzaFailures += 1n;
+  }
+
   if (!Number.isSafeInteger(pizzaCount) || pizzaCount < 0) {
     console.error('Failed to record pizzas sold: pizza count must be a non-negative safe integer');
   } else if (success) {
     pizzasSold += BigInt(pizzaCount);
   }
 
-  const timeUnixNano = (BigInt(Date.now()) * 1_000_000n).toString();
-  const metrics = [
-    {
-      name: success ? 'pizza.purchase.count' : 'pizza.purchase.failure.count',
-      unit: '{purchase}',
-      sum: {
-        aggregationTemporality: 1,
-        isMonotonic: true,
-        dataPoints: [{ asInt: '1', attributes: [], timeUnixNano }],
-      },
-    },
-    {
-      name: 'pizza.creation.duration',
-      unit: 'ms',
-      histogram: {
-        aggregationTemporality: 1,
-        dataPoints: [
-          {
-            count: '1',
-            sum: latency,
-            bucketCounts: ['1'],
-            explicitBounds: [],
-            attributes: [],
-            timeUnixNano,
-          },
-        ],
-      },
-    },
-  ];
-
   if (success) {
-    metrics.push({
-      name: 'pizza.purchase.revenue',
-      unit: '1',
-      sum: {
-        aggregationTemporality: 1,
-        isMonotonic: true,
-        dataPoints: [{ asDouble: price, attributes: [], timeUnixNano }],
-      },
-    });
+    if (Number.isFinite(price) && price >= 0 && Number.isFinite(pizzaRevenue + price)) {
+      pizzaRevenue += price;
+    } else {
+      console.error('Failed to record pizza revenue: price must be a non-negative finite number');
+    }
   }
 
-  sendMetrics(metrics).catch((error) => {
-    console.error('Failed to report pizza purchase metrics:', error);
-  });
+  if (Number.isFinite(latency) && latency >= 0 && Number.isFinite(pizzaDuration.sum + latency)) {
+    pizzaDuration.count += 1n;
+    pizzaDuration.sum += latency;
+    const bucket = pizzaDurationBounds.findIndex((bound) => latency <= bound);
+    pizzaDuration.buckets[bucket === -1 ? pizzaDurationBounds.length : bucket] += 1n;
+  } else {
+    console.error('Failed to record pizza latency: latency must be a non-negative finite number');
+  }
 }
 
 module.exports = {
